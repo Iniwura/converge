@@ -163,11 +163,11 @@ Canonical output:
 
 ## Reviewer walkthrough
 
-1. Open the [public application](https://converge-public-review.iniwuraakuru.chatgpt.site).
-2. Read the [live demo](https://converge-public-review.iniwuraakuru.chatgpt.site/app/demo).
-3. Open the [live objective](https://converge-public-review.iniwuraakuru.chatgpt.site/app/objectives/converge-live-20260924).
-4. Compare the [three submitted plans](https://converge-public-review.iniwuraakuru.chatgpt.site/app/objectives/converge-live-20260924/plans).
-5. Inspect the [canonical synthesis and provenance](https://converge-public-review.iniwuraakuru.chatgpt.site/app/objectives/converge-live-20260924/synthesis).
+1. Open the [public application](https://converge-jet.vercel.app).
+2. Read the [live demo](https://converge-jet.vercel.app/app/demo).
+3. Open the [live objective](https://converge-jet.vercel.app/app/objectives/converge-live-20260924).
+4. Compare the [three submitted plans](https://converge-jet.vercel.app/app/objectives/converge-live-20260924/plans).
+5. Inspect the [canonical synthesis and provenance](https://converge-jet.vercel.app/app/objectives/converge-live-20260924/synthesis).
 6. Review the [contract source](https://github.com/Iniwura/converge/blob/main/contracts/converge.py).
 7. Run the [contract tests](https://github.com/Iniwura/converge/tree/main/tests).
 
@@ -180,12 +180,16 @@ No wallet, objective creation, or funding is required to understand the live res
 - Contract: `0xc5594aA7c35d36279755F459d2aE083c2a226700`
 - Deployment transaction: `0x084cb80de890f2c72eb3372814faa20dca45fd14c6586fd6e30345458144bed7`
 - Deployed contract source SHA-256: `dbd738229a3f31d47855440d41bff5ae148b22b731b8d3c4be9efaf241a9710e`
+- Production frontend: `https://converge-jet.vercel.app`
+- Vercel project: `converge`
+- Vercel deployment: `dpl_A3ZUY73L4GCNEsnZ2zeZpnGZKeci`
+- Final frontend commit: `06cb36ffdc1a46fdb937f8e9a3675488f953a231`
 - [Studio Explorer contract page](https://explorer-studio.genlayer.com/address/0xc5594aA7c35d36279755F459d2aE083c2a226700)
-- [Public application](https://converge-public-review.iniwuraakuru.chatgpt.site)
-- [Private development Site](https://converge-workspace.iniwuraakuru.chatgpt.site)
+- [Public application](https://converge-jet.vercel.app)
+- [Old/private development hosting](https://converge-workspace.iniwuraakuru.chatgpt.site)
 - [GitHub repository](https://github.com/Iniwura/converge)
 
-The private development Site is retained separately; the public reviewer deployment is the submission URL.
+The old/private development hosting is retained separately; the public Vercel deployment is the submission URL.
 
 ## Verification
 
@@ -200,11 +204,20 @@ Contract:
 
 Frontend:
 
+- Regression tests: 18 passed.
 - TypeScript check passed.
 - ESLint passed.
 - Production build passed.
-- Public route checks returned HTTP 200 for `/`, `/app`, the live objective, plans, synthesis, and demo.
+- All required public Vercel routes returned HTTP 200: `/`, `/app`, `/app/new`, `/app/demo`, the live objective, plans, and synthesis.
+- The live accepted objective still reads as 3 plans, 5 CORE, 2 OPTIONAL, 1 conflict, and 1 unresolved issue.
+- The production wallet write path was tested successfully.
+- The production connected-wallet Address read path was fixed and verified.
 - The frontend reads the live Studio Dev contract and does not replace it with hardcoded synthesis data.
+
+## Public production write verification
+
+- `public-write-test-20260925`: real Studio Dev creation through the production frontend persisted an `OPEN` objective. The first frontend build incorrectly reported `Consensus did not resolve the transaction: unknown`; the simplified SDK receipt exposed `status_name`, while the frontend read `statusName`. Receipt handling was fixed. No unrecovered full transaction hash is claimed here.
+- `public-write-test-20260925-b`: created through the Vercel production frontend; authoritative confirmation completed before redirect. It is `OPEN`, creator `0xd0dd02322af812fc0dbddc69f9a055fbbe2c6673`, bounds `2–2`, and plan count `0`. The subsequent wallet-aware read found that `has_submitted` requires SDK `CalldataAddress`; the plain address string was invalid GenVM Address calldata. This was fixed without another write.
 
 ## Limitations
 
