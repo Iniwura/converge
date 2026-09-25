@@ -57,11 +57,11 @@ function parseResult<T>(value: unknown, label: string): T {
   if (typeof value === "string") {
     try {
       return JSON.parse(value) as T;
-    } catch (error) {
-      throw new Error(`${label} returned invalid JSON: ${String(error)}`);
+    } catch {
+      return value as T;
     }
   }
-  if (value && typeof value === "object") return value as T;
+  if (value !== null && value !== undefined) return value as T;
   throw new Error(`${label} returned an empty value.`);
 }
 
