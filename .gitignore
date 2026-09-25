@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+*.pyc
+artifacts/
+schema.json
+lint.json
+validation.json
+typecheck.json
+*genvmroot*/
+*genvm*/
+*.overlay/
+# Frontend checkout-only state and generated output
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/.wrangler/
+frontend/.sites-runtime/
+frontend/.vercel/
+frontend/.openai/hosting.json
+frontend/tsconfig.tsbuildinfo
