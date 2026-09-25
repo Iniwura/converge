@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { isSuccessful } from "genlayer-js";
+
 import {
   classifyDecisionReceipt,
   isWalletRejection,
@@ -28,6 +30,10 @@ test("handles numeric lifecycle fields when convenience names are absent", () =>
   assert.equal(receiptStatusName(receipt), "ACCEPTED");
   assert.equal(receiptExecutionResultName(receipt), "FINISHED_WITH_RETURN");
   assert.equal(classifyDecisionReceipt(receipt), "accepted-success");
+});
+
+test("matches the SDK isSuccessful result for numeric full receipts", () => {
+  assert.equal(isSuccessful({ status: 5, txExecutionResult: 1, lifecycle: {} }), true);
 });
 
 test("does not treat accepted execution errors as success", () => {

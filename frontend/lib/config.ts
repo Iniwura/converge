@@ -1,4 +1,4 @@
-import { createClient } from "genlayer-js";
+import { createClient, isSuccessful } from "genlayer-js";
 import { studioDevnet } from "genlayer-js/chains";
 import { TransactionHashVariant, type CalldataEncodable, type TransactionHash } from "genlayer-js/types";
 import type { Address, Account } from "viem";
@@ -264,7 +264,24 @@ export async function writeMethod(
       progress({ phase: "timeout", label: "CONSENSUS CONFIRMATION PENDING", txHash: submittedHash, error: message });
       throw new Error(message);
     }
-    const outcome = classifyDecisionReceipt(receipt);
+    let outcome = classifyDecisionReceipt(receipt);
+    if (outcome === "accepted-success" && !isSuccessful(receipt)) {
+      let refreshedReceipt;
+      try {
+        refreshedReceipt = await client.getTransaction({ hash: submittedHash });
+      } catch (error) {
+        const message = "The decision receipt was incomplete and could not be refreshed. " + errorMessage(error);
+        progress({ phase: "undetermined", label: "CONSENSUS RESULT INCOMPLETE", txHash: submittedHash, error: message });
+        throw new Error(message);
+      }
+      receipt = refreshedReceipt;
+      outcome = classifyDecisionReceipt(refreshedReceipt);
+      if (outcome !== "accepted-success" || !isSuccessful(refreshedReceipt)) {
+        const message = "The transaction reached a decision, but the SDK could not prove successful execution.";
+        progress({ phase: "undetermined", label: "CONSENSUS RESULT INCOMPLETE", txHash: submittedHash, error: message });
+        throw new Error(message);
+      }
+    }
     if (outcome === "accepted-execution-failed") {
       const message = decisionOutcomeMessage(receipt);
       progress({ phase: "failed", label: "CONTRACT EXECUTION FAILED", txHash: submittedHash, error: message });
