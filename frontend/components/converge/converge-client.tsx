@@ -312,10 +312,11 @@ function Header() {
 function TxRail() {
   const { tx, clearTx } = useApp();
   if (!tx.active) return null;
-  const busy = !["complete", "failed"].includes(tx.phase);
+  const busy = !["complete", "failed", "undetermined", "timeout"].includes(tx.phase);
+  const unresolved = tx.phase === "undetermined" || tx.phase === "timeout";
   return (
-    <div className={`tx-rail ${tx.phase === "failed" ? "tx-failed" : tx.phase === "complete" ? "tx-complete" : ""}`}>
-      <div className="tx-rail-icon">{busy ? <LoaderCircle className="spin" size={17} /> : tx.phase === "failed" ? <TriangleAlert size={17} /> : <Check size={17} />}</div>
+    <div className={`tx-rail ${tx.phase === "failed" ? "tx-failed" : tx.phase === "complete" ? "tx-complete" : unresolved ? "tx-pending" : ""}`}>
+      <div className="tx-rail-icon">{busy ? <LoaderCircle className="spin" size={17} /> : tx.phase === "failed" || unresolved ? <TriangleAlert size={17} /> : <Check size={17} />}</div>
       <div><strong>{tx.label}</strong>{tx.txHash && <span className="mono">{short(tx.txHash, 12, 10)}</span>}{tx.error && <p>{tx.error}</p>}</div>
       {!busy && <button className="icon-button" onClick={clearTx} aria-label="Dismiss transaction notice"><X size={16} /></button>}
     </div>
@@ -353,7 +354,9 @@ function AppProvider({ children }: { children: ReactNode }) {
       setRefreshKey((value) => value + 1);
       return result;
     } catch (error) {
-      setTx((current) => ({ active: true, phase: "failed", label: "TRANSACTION FAILED", txHash: current.txHash, error: error instanceof Error ? error.message : String(error) }));
+      setTx((current) => ["failed", "undetermined", "timeout"].includes(current.phase)
+        ? current
+        : { active: true, phase: "failed", label: "TRANSACTION FAILED", txHash: current.txHash, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }, [wallet]);

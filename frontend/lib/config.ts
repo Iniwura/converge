@@ -1,7 +1,13 @@
-import { createClient, isSuccessful } from "genlayer-js";
+import { createClient } from "genlayer-js";
 import { studioDevnet } from "genlayer-js/chains";
-import { TransactionHashVariant, type CalldataEncodable } from "genlayer-js/types";
+import { TransactionHashVariant, type CalldataEncodable, type TransactionHash } from "genlayer-js/types";
 import type { Address, Account } from "viem";
+import {
+  classifyDecisionReceipt,
+  decisionOutcomeMessage,
+  isWalletRejection,
+  pollAuthoritativeState,
+} from "./transaction-confirmation.mjs";
 
 export const RPC_URL = "https://studio-dev.genlayer.com/api";
 export const CHAIN_ID = 61997;
@@ -162,7 +168,7 @@ export function watchWallet(
 }
 
 export type WriteProgress = {
-  phase: "simulating" | "awaiting-wallet" | "submitted" | "pending" | "confirming-state" | "complete" | "failed";
+  phase: "simulating" | "awaiting-wallet" | "submitted" | "pending" | "confirming-state" | "complete" | "failed" | "undetermined" | "timeout";
   label: string;
   txHash?: string;
   error?: string;
@@ -188,17 +194,12 @@ function stateExpectation(functionName: string, args: WriteArgs, objective: { st
 
 async function confirmMutation(functionName: string, args: WriteArgs) {
   const objectiveId = String(args[0] ?? "");
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 36; attempt += 1) {
-    try {
-      const objective = await readMethod<{ state: string; plan_ids: string[] }>("get_objective", [objectiveId]);
-      if (stateExpectation(functionName, args, objective)) return objective;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 2000));
-  }
-  throw new Error(`Authoritative contract state was not confirmed.${lastError ? ` ${errorMessage(lastError)}` : ""}`);
+  const result = await pollAuthoritativeState({
+    read: () => readMethod<{ state: string; plan_ids: string[] }>("get_objective", [objectiveId]),
+    expected: (objective: { state: string; plan_ids: string[] }) => stateExpectation(functionName, args, objective),
+  });
+  if (result.kind === "confirmed") return result.value;
+  throw new Error(`Authoritative contract state was not confirmed.${result.lastError ? ` ${errorMessage(result.lastError)}` : ""}`);
 }
 
 export async function writeMethod(
@@ -211,9 +212,14 @@ export async function writeMethod(
   const clientProvider = wallet.provider as NonNullable<Parameters<typeof createClient>[0]>["provider"];
   const client = createClient({ chain, account: wallet.address, provider: clientProvider });
   const account = accountFor(wallet.address);
-  let hash: `0x${string}` | undefined;
+  let hash: TransactionHash | undefined;
+  let terminalReported = false;
+  const progress = (value: WriteProgress) => {
+    if (["complete", "failed", "undetermined", "timeout"].includes(value.phase)) terminalReported = true;
+    onProgress?.(value);
+  };
   try {
-    onProgress?.({ phase: "simulating", label: "SIMULATING AGAINST STUDIO DEV" });
+    progress({ phase: "simulating", label: "SIMULATING AGAINST STUDIO DEV" });
     const estimate = await client.estimateTransactionFeesForWrite({
       account,
       address: CONTRACT_ADDRESS,
@@ -232,31 +238,62 @@ export async function writeMethod(
       fees: { distribution: estimate.distribution, messageAllocations: estimate.messageAllocations, feeValue: estimate.feeValue },
       transactionHashVariant: LATEST_NONFINAL,
     });
-    onProgress?.({ phase: "awaiting-wallet", label: "AWAITING WALLET APPROVAL" });
-    const submittedHash = await client.writeContract({
-      account,
-      address: CONTRACT_ADDRESS,
-      functionName,
-      args,
-      value: 0n,
-      fees: { distribution: estimate.distribution, messageAllocations: estimate.messageAllocations, feeValue: estimate.feeValue },
-    });
-    hash = submittedHash;
-    onProgress?.({ phase: "submitted", label: "SUBMITTED", txHash: submittedHash });
-    onProgress?.({ phase: "pending", label: "CONSENSUS PENDING", txHash: submittedHash });
-    const receipt = await client.waitForDecision({ hash: submittedHash, interval: 3000 });
-    const accepted = receipt.statusName === "ACCEPTED" || receipt.statusName === "FINALIZED";
-    if (!accepted) throw new Error(`Consensus did not resolve the transaction: ${String(receipt.statusName ?? "unknown")}.`);
-    if (!isSuccessful(receipt)) {
-      throw new Error(`The transaction was accepted but contract execution failed: ${String(receipt.txExecutionResultName ?? "unknown")}.`);
+    progress({ phase: "awaiting-wallet", label: "AWAITING WALLET APPROVAL" });
+    let submittedHash: TransactionHash;
+    try {
+      submittedHash = await client.writeContract({
+        account,
+        address: CONTRACT_ADDRESS,
+        functionName,
+        args,
+        value: 0n,
+        fees: { distribution: estimate.distribution, messageAllocations: estimate.messageAllocations, feeValue: estimate.feeValue },
+      });
+    } catch (error) {
+      progress({ phase: "failed", label: isWalletRejection(error) ? "WALLET REJECTED" : "WALLET SUBMISSION FAILED", error: errorMessage(error) });
+      throw error;
     }
-    onProgress?.({ phase: "confirming-state", label: "CONFIRMING AUTHORITATIVE STATE", txHash: hash });
-    const confirmed = await confirmMutation(functionName, args);
-    onProgress?.({ phase: "complete", label: "CONTRACT STATE CONFIRMED", txHash: hash });
+    hash = submittedHash;
+    progress({ phase: "submitted", label: "SUBMITTED", txHash: submittedHash });
+    progress({ phase: "pending", label: "CONSENSUS PENDING", txHash: submittedHash });
+    let receipt;
+    try {
+      receipt = await client.waitForDecision({ hash: submittedHash, interval: 3000, retries: 120, fullTransaction: true });
+    } catch (error) {
+      const message = `The transaction was submitted, but consensus confirmation is still pending. ${errorMessage(error)}`;
+      progress({ phase: "timeout", label: "CONSENSUS CONFIRMATION PENDING", txHash: submittedHash, error: message });
+      throw new Error(message);
+    }
+    const outcome = classifyDecisionReceipt(receipt);
+    if (outcome === "accepted-execution-failed") {
+      const message = decisionOutcomeMessage(receipt);
+      progress({ phase: "failed", label: "CONTRACT EXECUTION FAILED", txHash: submittedHash, error: message });
+      throw new Error(message);
+    }
+    if (outcome === "undetermined") {
+      const message = decisionOutcomeMessage(receipt);
+      progress({ phase: "undetermined", label: "CONSENSUS UNDETERMINED", txHash: submittedHash, error: message });
+      throw new Error(message);
+    }
+    if (outcome !== "accepted-success") {
+      const message = decisionOutcomeMessage(receipt);
+      progress({ phase: "undetermined", label: "CONSENSUS RESULT INCOMPLETE", txHash: submittedHash, error: message });
+      throw new Error(message);
+    }
+    progress({ phase: "confirming-state", label: "CONFIRMING AUTHORITATIVE STATE", txHash: hash });
+    let confirmed;
+    try {
+      confirmed = await confirmMutation(functionName, args);
+    } catch (error) {
+      const message = `The transaction was accepted, but authoritative contract state is not visible yet. ${errorMessage(error)}`;
+      progress({ phase: "timeout", label: "STATE CONFIRMATION PENDING", txHash: hash, error: message });
+      throw new Error(message);
+    }
+    progress({ phase: "complete", label: "CONTRACT STATE CONFIRMED", txHash: hash });
     return { hash, receipt, objective: confirmed };
   } catch (error) {
     const message = errorMessage(error);
-    onProgress?.({ phase: "failed", label: "TRANSACTION FAILED", txHash: hash, error: message });
+    if (!terminalReported) progress({ phase: "failed", label: "TRANSACTION FAILED", txHash: hash, error: message });
     throw new Error(message);
   }
 }
