@@ -9,7 +9,8 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 type HostingConfig = { d1?: string; r2?: string };
 const hostingConfigPath = new URL("./.openai/hosting.json", import.meta.url);
-const hostingConfig: HostingConfig = existsSync(hostingConfigPath)
+const hasHostingConfig = existsSync(hostingConfigPath);
+const hostingConfig: HostingConfig = hasHostingConfig
   ? JSON.parse(readFileSync(hostingConfigPath, "utf8")) as HostingConfig
   : {};
 const { d1, r2 } = hostingConfig;
@@ -62,7 +63,7 @@ export default defineConfig(async () => {
     },
     plugins: [
       vinext(),
-      sites({ mockAuth: !managedLinux }),
+      ...(hasHostingConfig ? [sites({ mockAuth: !managedLinux })] : []),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         inspectorPort: false,
